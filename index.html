@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Harvest Heritage: Final Fix</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; }
+        @import url('https://fonts.googleapis.com/css2?family=VT323&display=swap');
+
+        /* UI */
+        #ui-container { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 900px; z-index: 10; display: none; }
+        #ui-box { background: linear-gradient(180deg, #1a237e 0%, #000051 100%); color: #fff; font-family: 'VT323', monospace; border: 4px solid #fff; border-radius: 8px; padding: 15px; font-size: 24px; min-height: 80px; white-space: pre-wrap; box-shadow: 0 0 20px rgba(0,0,0,0.5); text-shadow: 2px 2px #000; line-height: 1.2; }
+        #minimap-container { position: absolute; top: 20px; right: 20px; border: 3px solid white; background: rgba(0,0,0,0.8); z-index: 15; display: none; }
+        #dungeon-ui { position: absolute; top: 20px; left: 20px; color: #ffeb3b; font-family: 'VT323', monospace; font-size: 30px; text-shadow: 2px 2px #000; display: none; z-index: 15; }
+        #scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: repeating-linear-gradient(to bottom, transparent 0px, transparent 2px, rgba(0,0,0,0.1) 3px, rgba(0,0,0,0.1) 4px); pointer-events: none; z-index: 5; }
+        
+        /* TITLE */
+        #title-screen { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 20; background: #3949ab; font-family: 'VT323', monospace; text-align: center; cursor: pointer; }
+        h1 { font-size: 90px; color: #ffeb3b; text-shadow: 5px 5px #b71c1c; margin: 0; }
+        .subtitle { font-size: 30px; color: #fff; margin-bottom: 20px; }
+        .credits { font-size: 24px; color: #b2dfdb; margin-top: 20px; }
+        .start-btn { font-size: 40px; color: #69f0ae; animation: blink 1s infinite; margin-top: 30px; }
+        @keyframes blink { 50% { opacity: 0; } }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r132/three.min.js"></script>
+</head>
+<body onclick="startGame()"> 
+    <div id="scanlines"></div>
+    <div id="dungeon-ui">DUNGEON: 1 | TRASH: 0</div>
+    <div id="minimap-container"><canvas id="minimap" width="200" height="150"></canvas></div>
+
+    <div id="title-screen">
+        <h1>HARVEST HERITAGE</h1>
+        <div class="subtitle">GLOBAL FOODWAYS & POCONG MARKETING</div>
+        <div class="credits">Created by Angga Conni Saputra - 2026</div>
+        <div class="start-btn">CLICK TO START</div>
+    </div>
+    
+    <div id="ui-container"><div id="ui-box">...</div></div>
+
+<script>
+    let GAME_STATE = 'TITLE'; 
+    const ROWS = 15; const COLS = 20;
+    let dungeonLevel = 1; let trashScore = 0; let isScavenging = false;
+
+    // --- DATA ---
+    // PERBAIKAN PENTING: WALL dipindah ke 99, PATH jadi 1 (Jalanan aman)
+    const TILE = {
+        GRASS: 0, PATH: 1, WATER: 2, SOIL: 3, TILLED: 4, LAVA: 5, BLACKBOARD: 8,
+        WALL: 99, // ID Tembok dipindah biar gak tabrakan sama jalan
+        // PINTU
+        DOOR_VILLAGE: 91, DOOR_FARM: 92, DOOR_MOUNTAIN: 93, DOOR_SCHOOL: 94, 
+        DOOR_SQUARE: 95, DOOR_BEACH: 96, DOOR_GRAVE: 97, DOOR_MARKET: 98,
+        DOOR_DUNGEON: 991, DOOR_SAWIT: 100, DOOR_FOOD1: 101, DOOR_FOOD2: 102, DOOR_FOOD3: 103, DOOR_FOOD4: 104,
+        // BANGUNAN
+        HOUSE_WALL: 10, HOUSE_WINDOW: 11, HOUSE_DOOR: 12,
+        // DEKORASI
+        DESK: 15, BED: 16, TV: 17, KITCHEN: 18, TABLE: 19, RUG: 20, FOUNTAIN: 21, BENCH: 22,
+        TOMBSTONE: 23, STALL: 24, 
+        // TANAMAN
+        PLANT: 50, MANGROVE: 51, PALM_TREE: 52
+    };
+
+    const pocongFacts = [
+        "Pocong (Marketing): 'Article 1 of 2003 Convention: The main goal is SAFEGUARDING!'",
+        "Pocong (Marketing): 'ICH = practices, representations, expressions, knowledge, skills.'",
+        "Pocong (Marketing): 'Communities are the true OWNERS of ICH, not the State!'",
+        "Pocong (Marketing): 'UNESCO does not grant Copyright, but promotes viability.'",
+        "Pocong (Marketing): 'Don't just display culture in museums, LIVE IT!'",
+        "Pocong (Marketing): 'I am a ghost, but I care about culture. Do you?'"
+    ];
+
+    const teachingFacts = [
+        "Teacher Angga: 'Planting palm oil in protected forests is illegal!'",
+        "Teacher Angga: 'Mangrove roots absorb 4x more carbon than tropical rainforests.'",
+        "Teacher Angga: 'Gotong Royong (Mutual Assistance) is the core of Pancasila.'"
+    ];
+
+    const foodFacts = {
+        "China": ["China: 'Noodles -> Italy -> Pasta.'", "China: 'Wok Hei technique.'"],
+        "India": ["India: 'Rendang roots in curry.'", "India: 'Black pepper = gold.'"],
+        "Persia": ["Persia: 'Saffron & Spinach.'", "Persia: 'Biryani <-> Pilaf.'"],
+        "Italy": ["Italy: 'Tomato from America.'", "Italy: 'Coffee from Arabs.'"],
+        "Indonesia": ["Indonesia: 'Spice Islands changed history.'", "Indonesia: 'Tempeh = Fermentation.'"],
+        "Turkey": ["Turkey: 'Yoghurt.'", "Turkey: 'Coffee houses.'"],
+        "Uzbekistan": ["Uzbekistan: 'Plov is Silk Road heart.'"],
+        "Arab Saudi": ["Saudi: 'Dates for energy.'"],
+        "Yemen": ["Yemen: 'First coffee brew.'"],
+        "Zanzibar": ["Zanzibar: 'Cloves island.'"],
+        "Portugal": ["Portugal: 'We brought Chili to Asia!'"],
+        "Spain": ["Spain: 'Chocolate from New World.'"],
+        "Netherlands": ["Netherlands: 'Rijsttafel is colonial.'"],
+        "UK": ["UK: 'Tea from Asia.'"],
+        "France": ["France: 'Baguette -> Banh Mi.'"],
+        "Mexico": ["Mexico: 'Corn & Chili.'"],
+        "Peru": ["Peru: 'Potatoes origin.'"],
+        "Malaysia": ["Malaysia: 'Laksa.'"],
+        "Thailand": ["Thailand: 'Pad Thai.'"],
+        "Vietnam": ["Vietnam: 'Pho.'"],
+        "USA": ["USA: 'Soul Food.'"],
+        "Ethiopia": ["Ethiopia: 'Coffee origin.'"],
+        "Sri Lanka": ["Sri Lanka: 'True Cinnamon.'"]
+    };
+
+    const ichMarketFacts = [
+        "Chief: 'Domain 1: Oral Traditions.'",
+        "Chief: 'Domain 2: Performing Arts.'",
+        "Chief: 'Domain 3: Rituals.'",
+        "Chief: 'Domain 4: Nature Knowledge.'",
+        "Chief: 'Domain 5: Craftsmanship.'"
+    ];
+
+    const monsterNames = ["Hantu Plastik", "Setan Sedotan", "Zombie Botol", "Monster Popok", "Golem Styrofoam"];
+
+    // --- MAPS ---
+    // FARM (Fixed Path: ID 1 is now PATH, ID 10 is WALL)
+    const mapFarm = [
+        [10,10,10,10,10,10,10,10,10,91,91,10,10,10,10,10,10,10,10,10],
+        [10,10,10,10,10,10,10,10,10,1,1,10,10,10,10,10,10,10,10,10],
+        [10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],
+        [10,0,10,10,10,10,0,0,0,1,1,0,3,3,3,3,3,0,0,10],
+        [10,0,10,1,1,10,0,0,0,1,1,0,3,3,3,3,3,0,0,10],
+        [10,0,10,11,12,11,0,0,0,1,1,0,3,3,3,3,3,0,0,10],
+        [10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],
+        [10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],
+        [10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],
+        [10,0,2,2,2,2,2,0,0,1,1,0,0,0,0,0,0,0,0,10],
+        [10,0,2,2,2,2,2,0,0,1,1,0,0,0,0,0,0,0,0,10],
+        [10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],
+        [10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],
+        [10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],
+        [10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10]
+    ];
+
+    const mapVillage = [[10,10,10,10,10,10,10,10,10,93,93,10,10,10,10,10,10,10,10,10],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],[10,0,10,10,0,0,10,10,0,1,1,0,10,10,0,0,10,10,0,10],[10,0,1,1,0,0,1,1,0,1,1,0,1,1,0,0,1,1,0,10],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,95],[94,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,95],[94,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,95],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,95],[10,0,10,10,0,0,10,10,0,1,1,0,10,10,0,0,10,10,0,10],[10,0,1,1,0,0,1,1,0,1,1,0,1,1,0,0,1,1,0,10],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],[10,10,10,10,10,10,10,10,10,92,92,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10]];
+    const mapSchool = [[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,1,1,1,1,1,1,8,8,8,8,1,1,1,1,1,1,1,1,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,10],[10,1,15,15,1,15,15,1,15,15,1,15,15,1,1,1,1,1,1,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,10],[10,1,15,15,1,15,15,1,15,15,1,15,15,1,1,1,1,1,1,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,10],[10,10,10,10,10,10,10,10,10,91,91,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10]];
+    const mapTownSquare = [[10,10,10,10,10,10,10,10,10,97,97,10,10,10,10,10,10,10,10,10],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],[10,0,22,0,0,0,0,0,0,1,1,0,0,0,0,0,0,22,0,10],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],[91,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,96],[91,1,1,1,1,1,1,21,21,21,21,1,1,1,1,1,1,1,1,96],[91,1,1,1,1,1,1,21,2,2,21,1,1,1,1,1,1,1,1,96],[91,1,1,1,1,1,1,21,21,21,21,1,1,1,1,1,1,1,1,96],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],[10,0,22,0,0,0,0,0,0,1,1,0,0,0,0,0,0,22,0,10],[10,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,10],[10,10,10,10,10,10,10,10,10,98,98,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10]];
+    const mapMarket = [[10,10,10,10,10,10,10,10,10,95,95,10,10,10,10,10,10,10,10,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,10],[10,19,0,19,0,19,0,19,0,1,1,0,19,0,19,0,19,0,100,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,100],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,100],[10,19,0,19,0,19,0,19,0,1,1,0,19,0,19,0,19,0,10,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,10],[10,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,10],[10,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,10],[10,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10],[10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10]];
+    const mapSawit = [[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,0,0,0,0,0,52,0,0,0,0,0,52,0,0,0,0,0,1,1],[98,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,101,101],[98,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,101,101],[98,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,101,101],[98,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,0,52,0,0,0,0,0,52,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]];
+    const mapGraveyard = [[1,1,1,1,1,1,1,1,1,991,991,1,1,1,1,1,1,1,1,1],[1,3,3,3,3,3,3,3,3,0,0,3,3,3,3,3,3,3,3,1],[1,3,23,23,0,0,23,23,0,0,23,23,0,0,23,23,3,1],[1,3,23,23,0,0,23,23,0,0,23,23,0,0,23,23,3,1],[1,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,1],[1,3,23,23,0,0,23,23,0,0,23,23,0,0,23,23,3,1],[1,3,23,23,0,0,23,23,0,0,23,23,0,0,23,23,3,1],[1,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,1],[1,3,23,23,0,0,23,23,0,0,23,23,0,0,23,23,3,1],[1,3,23,23,0,0,23,23,0,0,23,23,0,0,23,23,3,1],[1,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,1],[1,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,1],[1,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,3,1],[1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,95,95,1,1,1,1,1,1,1,1,1]];
+    const mapMountain = [[1,1,1,1,1,1,1,5,5,5,5,5,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,5,5,5,5,5,5,5,1,1,1,1,1,1,1],[1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1],[1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,91,91,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]];
+    const mapBeach = [[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[95,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[95,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[95,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[95,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]];
+    const mapHome = [[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,18,18,18,0,0,0,0,0,0,0,0,0,0,0,16,16,1,1],[1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,1,0,19,19,0,0,0,0,0,0,0,0,17,0,0,0,0,1,1],[1,1,0,19,19,0,20,20,20,20,0,0,0,0,0,0,0,0,1,1],[1,1,0,0,0,0,20,20,20,20,0,0,0,0,0,0,0,0,1,1],[1,1,0,0,0,0,20,20,20,20,0,0,0,0,0,0,0,0,1,1],[1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1],[1,1,1,1,1,1,1,1,1,92,92,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]];
+    
+    // Dynamic Maps
+    const baseFood = [[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,24,0,24,0,24,0,24,0,24,0,24,0,24,0,24,0,1,1],[1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1],[1,24,0,24,0,24,0,24,0,24,0,24,0,24,0,24,0,1,1],[1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1],[1,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,1,1],[1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]];
+    const mapFood1 = JSON.parse(JSON.stringify(baseFood)); mapFood1[7][0]=100; mapFood1[7][19]=102;
+    const mapFood2 = JSON.parse(JSON.stringify(baseFood)); mapFood2[7][0]=101; mapFood2[7][19]=103;
+    const mapFood3 = JSON.parse(JSON.stringify(baseFood)); mapFood3[7][0]=102; mapFood3[7][19]=104;
+    const mapFood4 = JSON.parse(JSON.stringify(baseFood)); mapFood4[7][0]=103;
+    const mapDungeon = []; 
+
+    let maps = { 'farm': mapFarm, 'village': mapVillage, 'mountain': mapMountain, 'school': mapSchool, 'home': mapHome, 'square': mapTownSquare, 'beach': mapBeach, 'graveyard': mapGraveyard, 'market': mapMarket, 'sawit': mapSawit, 'dungeon': mapDungeon, 'food1': mapFood1, 'food2': mapFood2, 'food3': mapFood3, 'food4': mapFood4 };
+
+    // --- NPCs ---
+    const npcsData = [
+        { map: 'village', x: 2, y: 4, dialog: "Mr. Pendi: 'Renovation? I can help.'", type: 'pendi' },
+        { map: 'village', x: 14, y: 4, dialog: "Police: 'Safety first!'", type: 'police' },
+        { map: 'mountain', x: 10, y: 4, dialog: "Mbah Juru: 'Listen to the mountain.'", type: 'mbah' },
+        { map: 'school', x: 3, y: 3, dialog: "Budi: 'Mangroves protect us!'", type: 'kid' },
+        { map: 'school', x: 6, y: 3, dialog: "Casper: 'I love history class.'", type: 'casper' },
+        { map: 'school', x: 9, y: 3, dialog: "Siti: 'Batik is Indonesia's identity.'", type: 'kid_girl' },
+        { map: 'square', x: 5, y: 8, dialog: "Laras: 'Dance practice later.'", type: 'girl' },
+        { map: 'graveyard', x: 2, y: 8, dialog: "Digger: 'Peaceful place.'", type: 'oldman' },
+        { map: 'graveyard', x: 10, y: 5, dialog: "POCONG", type: 'pocong' },
+        { map: 'sawit', x: 5, y: 5, dialog: "Pak Wowo: 'Economic growth!'", type: 'wowo' },
+        { map: 'sawit', x: 10, y: 5, dialog: "Activist: 'Stop destroying forests!'", type: 'activist' },
+        { map: 'market', x: 1, y: 3, dialog: "Batik: 'ICH Domain: Craftsmanship.'", type: 'girl' },
+        { map: 'market', x: 3, y: 3, dialog: "Keris: 'Spiritual weapon.'", type: 'pendi' },
+        { map: 'market', x: 5, y: 3, dialog: "Jamu: 'ICH Domain: Knowledge of Nature.'", type: 'girl' },
+        { map: 'market', x: 7, y: 3, dialog: "Fish: 'Fresh from the east!'", type: 'fisherman' },
+        { map: 'market', x: 9, y: 3, dialog: "Wayang: 'ICH Domain: Performing Arts.'", type: 'oldman' },
+        { map: 'market', x: 11, y: 3, dialog: "Noken: 'Papuan bag of life.'", type: 'girl' },
+        { map: 'market', x: 13, y: 3, dialog: "Angklung: 'Unity in melody.'", type: 'mbah' },
+        { map: 'market', x: 15, y: 3, dialog: "Salt", type: 'fisherman' },
+        { map: 'market', x: 17, y: 3, dialog: "Terasi", type: 'girl' },
+        { map: 'market', x: 1, y: 6, dialog: "Pearls", type: 'girl' },
+        { map: 'market', x: 3, y: 6, dialog: "Seaweed", type: 'fisherman' },
+        { map: 'market', x: 5, y: 6, dialog: "Gamelan", type: 'mbah' },
+        { map: 'market', x: 7, y: 6, dialog: "Pinisi", type: 'oldman' },
+        { map: 'market', x: 9, y: 6, dialog: "Songket", type: 'girl' },
+        { map: 'market', x: 11, y: 6, dialog: "Tenun", type: 'girl' },
+        { map: 'market', x: 13, y: 6, dialog: "Udeng", type: 'pendi' },
+        { map: 'market', x: 15, y: 6, dialog: "Caping", type: 'oldman' },
+        { map: 'market', x: 9, y: 1, dialog: "Market Chief", type: 'ich_guide' },
+        { map: 'food1', x: 2, y: 4, country: "China", type: 'girl' },
+        { map: 'food1', x: 5, y: 4, country: "India", type: 'oldman' },
+        { map: 'food1', x: 8, y: 4, country: "Persia", type: 'pendi' },
+        { map: 'food1', x: 11, y: 4, country: "Uzbekistan", type: 'girl' },
+        { map: 'food1', x: 2, y: 7, country: "Turkey", type: 'oldman' },
+        { map: 'food1', x: 5, y: 7, country: "Italy", type: 'girl' },
+        { map: 'food1', x: 8, y: 7, country: "Indonesia", type: 'mbah' },
+        { map: 'food1', x: 11, y: 7, country: "Sri Lanka", type: 'girl' },
+        { map: 'food2', x: 2, y: 4, country: "Arab Saudi", type: 'pendi' },
+        { map: 'food2', x: 5, y: 4, country: "Yemen", type: 'oldman' },
+        { map: 'food2', x: 8, y: 4, country: "Zanzibar", type: 'girl' },
+        { map: 'food2', x: 11, y: 4, country: "Portugal", type: 'fisherman' },
+        { map: 'food2', x: 2, y: 7, country: "Spain", type: 'girl' },
+        { map: 'food2', x: 5, y: 7, country: "Netherlands", type: 'oldman' },
+        { map: 'food2', x: 8, y: 7, country: "UK", type: 'pendi' },
+        { map: 'food2', x: 11, y: 7, country: "France", type: 'girl' },
+        { map: 'food3', x: 2, y: 4, country: "Mexico", type: 'girl' },
+        { map: 'food3', x: 5, y: 4, country: "Peru", type: 'oldman' },
+        { map: 'food3', x: 8, y: 4, country: "Malaysia", type: 'girl' },
+        { map: 'food3', x: 11, y: 4, country: "Thailand", type: 'girl' },
+        { map: 'food3', x: 5, y: 7, country: "Vietnam", type: 'oldman' },
+        { map: 'food3', x: 8, y: 7, country: "USA", type: 'police' },
+        { map: 'food4', x: 5, y: 5, country: "Ethiopia", type: 'girl' }
+    ];
+
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x87CEEB); scene.fog = new THREE.Fog(0x87CEEB, 15, 30);
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 25, 20); camera.lookAt(0, 0, 0);
+    const renderer = new THREE.WebGLRenderer({ antialias: false });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6); scene.add(ambientLight);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 0.8); sunLight.position.set(10, 20, 15); sunLight.castShadow = true; scene.add(sunLight);
+
+    let worldGroup = new THREE.Group(); scene.add(worldGroup);
+    let npcGroup = new THREE.Group(); scene.add(npcGroup);
+    let monsterGroup = new THREE.Group(); scene.add(monsterGroup);
+
+    const MAT = {
+        GRASS: new THREE.MeshLambertMaterial({ color: 0x8bc34a }),
+        WALL: new THREE.MeshLambertMaterial({ color: 0x795548 }),
+        SOIL: new THREE.MeshLambertMaterial({ color: 0x5d4037 }),
+        TILLED: new THREE.MeshLambertMaterial({ color: 0x3e2723 }),
+        WATER: new THREE.MeshLambertMaterial({ color: 0x4fc3f7, transparent:true, opacity:0.8 }),
+        LAVA: new THREE.MeshBasicMaterial({ color: 0xff5722 }),
+        DOOR: new THREE.MeshLambertMaterial({ color: 0xffd54f }), 
+        BLACKBOARD: new THREE.MeshLambertMaterial({ color: 0x263238 }),
+        WOOD: new THREE.MeshLambertMaterial({ color: 0x8d6e63 }),
+        ROOF: new THREE.MeshLambertMaterial({ color: 0xd84315 }),
+        GLASS: new THREE.MeshLambertMaterial({ color: 0xb3e5fc }),
+        DOOR_VISUAL: new THREE.MeshLambertMaterial({ color: 0x5d4037 }),
+        DESK: new THREE.MeshLambertMaterial({ color: 0xd7ccc8 }),
+        BED: new THREE.MeshLambertMaterial({ color: 0xffcdd2 }),
+        TV: new THREE.MeshLambertMaterial({ color: 0x424242 }),
+        KITCHEN: new THREE.MeshLambertMaterial({ color: 0xf5f5f5 }), 
+        TABLE: new THREE.MeshLambertMaterial({ color: 0x8d6e63 }), 
+        RUG: new THREE.MeshLambertMaterial({ color: 0xef5350 }), 
+        FOUNTAIN: new THREE.MeshLambertMaterial({ color: 0xb0bec5 }),
+        TOMBSTONE: new THREE.MeshLambertMaterial({ color: 0x757575 }), 
+        STALL: new THREE.MeshLambertMaterial({ color: 0xffcc80 }), 
+        PLANT_GREEN: new THREE.MeshLambertMaterial({ color: 0x76ff03 }),
+        MANGROVE_TRUNK: new THREE.MeshLambertMaterial({ color: 0x3e2723 }),
+        MANGROVE_LEAF: new THREE.MeshLambertMaterial({ color: 0x2e7d32 }),
+        PALM_LEAF: new THREE.MeshLambertMaterial({ color: 0x33691e }),
+        SKIN: new THREE.MeshLambertMaterial({ color: 0xffcc80 }),
+        BLUE: new THREE.MeshLambertMaterial({ color: 0x42a5f5 }),
+        RED: new THREE.MeshLambertMaterial({ color: 0xef5350 }),
+        BROWN: new THREE.MeshLambertMaterial({ color: 0x795548 }),
+        YELLOW: new THREE.MeshLambertMaterial({ color: 0xffeb3b }),
+        PINK: new THREE.MeshLambertMaterial({ color: 0xf48fb1 }),
+        WHITE: new THREE.MeshLambertMaterial({ color: 0xffffff }),
+        GREY: new THREE.MeshLambertMaterial({ color: 0x9e9e9e }),
+        HAT_BLUE: new THREE.MeshLambertMaterial({ color: 0x1e88e5 }),
+        SHOES: new THREE.MeshLambertMaterial({ color: 0x3e2723 }),
+        BACKPACK: new THREE.MeshLambertMaterial({ color: 0x5d4037 }),
+        DUNGEON_FLOOR: new THREE.MeshLambertMaterial({ color: 0x212121 }),
+        GHOST: new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 })
+    };
+
+    const GEO = {
+        FLAT: new THREE.BoxGeometry(1, 0.2, 1),
+        BLOCK: new THREE.BoxGeometry(1, 1.2, 1),
+        ROOF_SLOPE: new THREE.ConeGeometry(0.8, 1, 4),
+        SPROUT: new THREE.BoxGeometry(0.2, 0.4, 0.2),
+        TREE_TRUNK: new THREE.CylinderGeometry(0.2, 0.3, 1),
+        TREE_LEAF: new THREE.DodecahedronGeometry(0.5),
+        PALM_LEAVES: new THREE.ConeGeometry(0.8, 0.8, 5),
+        CHAR_HEAD: new THREE.BoxGeometry(0.4, 0.4, 0.4),
+        CHAR_BODY: new THREE.BoxGeometry(0.4, 0.5, 0.3),
+        CHAR_LIMB: new THREE.BoxGeometry(0.15, 0.4, 0.15),
+        CHAR_HAT: new THREE.BoxGeometry(0.42, 0.15, 0.45),
+        CHAR_BACKPACK: new THREE.BoxGeometry(0.3, 0.35, 0.15),
+        POCONG_BODY: new THREE.CylinderGeometry(0.25, 0.2, 1.2, 8),
+        POCONG_KNOT: new THREE.SphereGeometry(0.15),
+        MONSTER: new THREE.DodecahedronGeometry(0.4)
+    };
+    GEO.ROOF_SLOPE.rotateY(Math.PI / 4);
+    GEO.CHAR_LIMB.translate(0, -0.2, 0); 
+
+    let currentMapKey = ''; let currentMapBlueprint = []; let mapObjects = {}; 
+
+    function createVoxel(x, z, geometry, material, heightOffset = 0, type = 'solid') {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(x - COLS/2 + 0.5, heightOffset, z - ROWS/2 + 0.5);
+        mesh.castShadow = true; mesh.receiveShadow = true;
+        worldGroup.add(mesh);
+        mapObjects[`${x},${z}`] = { mesh, type, blueprintId: currentMapBlueprint[z][x] };
+        return mesh;
+    }
+
+    function createPlant(x, z) {
+        const sprout = new THREE.Mesh(GEO.SPROUT, MAT.PLANT_GREEN);
+        sprout.position.set(x - COLS/2 + 0.5, 0.2, z - ROWS/2 + 0.5);
+        worldGroup.add(sprout);
+    }
+    function createMangrove(x, z) {
+        const trunk = new THREE.Mesh(GEO.TREE_TRUNK, MAT.MANGROVE_TRUNK);
+        trunk.position.set(x - COLS/2 + 0.5, 0.5, z - ROWS/2 + 0.5);
+        worldGroup.add(trunk);
+        const leaf = new THREE.Mesh(GEO.TREE_LEAF, MAT.MANGROVE_LEAF);
+        leaf.position.set(x - COLS/2 + 0.5, 1.2, z - ROWS/2 + 0.5);
+        worldGroup.add(leaf);
+    }
+    function createPalm(x, z) {
+        const trunk = new THREE.Mesh(GEO.TREE_TRUNK, MAT.MANGROVE_TRUNK);
+        trunk.position.set(x - COLS/2 + 0.5, 0.5, z - ROWS/2 + 0.5);
+        worldGroup.add(trunk);
+        const leaf = new THREE.Mesh(GEO.PALM_LEAVES, MAT.PALM_LEAF);
+        leaf.position.set(x - COLS/2 + 0.5, 1.2, z - ROWS/2 + 0.5);
+        worldGroup.add(leaf);
+    }
+
+    function createCharacterModel(isPlayer = true, npcType = null) {
+        const group = new THREE.Group();
+        if (npcType === 'pocong') {
+            const body = new THREE.Mesh(GEO.POCONG_BODY, MAT.WHITE); body.position.y = 0.6; group.add(body);
+            const knot = new THREE.Mesh(GEO.POCONG_KNOT, MAT.WHITE); knot.position.y = 1.3; group.add(knot);
+            const eyes = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.05, 0.2), MAT.BLACKBOARD); eyes.position.set(0, 1.0, 0.15); group.add(eyes);
+            return group;
+        }
+        if (npcType === 'casper') {
+            const body = new THREE.Mesh(GEO.POCONG_BODY, MAT.GHOST); body.position.y = 0.4; body.scale.set(0.8, 0.8, 0.8); group.add(body);
+            const head = new THREE.Mesh(GEO.POCONG_KNOT, MAT.GHOST); head.position.y = 1.0; head.scale.set(1.5, 1.5, 1.5); group.add(head);
+            const eyes = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.05, 0.15), MAT.BLACKBOARD); eyes.position.set(0, 1.0, 0.15); group.add(eyes);
+            return group;
+        }
+        let matShirt = MAT.BLUE; let matAcc = MAT.RED; let matHat = MAT.HAT_BLUE;
+        if (npcType === 'pendi') { matShirt = MAT.BROWN; matAcc = MAT.YELLOW; }
+        if (npcType === 'police') { matShirt = MAT.BLUE; matAcc = MAT.BROWN; matHat = MAT.GREY; }
+        if (npcType === 'kid') { matShirt = MAT.PLANT_GREEN; matAcc = MAT.WHITE; }
+        if (npcType === 'kid_girl') { matShirt = MAT.PINK; matAcc = MAT.WHITE; matHat = MAT.PINK; }
+        if (npcType === 'mbah') { matShirt = MAT.WHITE; matAcc = MAT.GREY; matHat = MAT.WHITE; }
+        if (npcType === 'girl') { matShirt = MAT.PINK; matAcc = MAT.YELLOW; }
+        if (npcType === 'fisherman') { matShirt = MAT.BLUE; matAcc = MAT.WHITE; matHat = MAT.YELLOW; }
+        if (npcType === 'oldman') { matShirt = MAT.BROWN; matAcc = MAT.GREY; }
+        if (npcType === 'wowo') { matShirt = MAT.WHITE; matAcc = MAT.BROWN; matHat = MAT.BROWN; }
+        if (npcType === 'activist') { matShirt = MAT.PLANT_GREEN; matAcc = MAT.BLACKBOARD; matHat = MAT.RED; }
+        if (npcType === 'ich_guide') { matShirt = MAT.BROWN; matAcc = MAT.RED; matHat = MAT.BROWN; }
+
+        const head = new THREE.Mesh(GEO.CHAR_HEAD, MAT.SKIN); head.position.y = 1.35; head.castShadow = true; group.add(head);
+        const hat = new THREE.Mesh(GEO.CHAR_HAT, matHat); hat.position.set(0, 1.55, -0.05); group.add(hat);
+        const body = new THREE.Mesh(GEO.CHAR_BODY, matShirt); body.position.y = 0.9; body.castShadow = true; group.add(body);
+        const shirt = new THREE.Mesh(new THREE.BoxGeometry(0.41, 0.2, 0.31), matAcc); shirt.position.y = 1.05; group.add(shirt);
+        const legL = new THREE.Mesh(GEO.CHAR_LIMB, matShirt); legL.name = 'legL'; legL.position.set(-0.11, 0.65, 0); group.add(legL);
+        const legR = new THREE.Mesh(GEO.CHAR_LIMB, matShirt); legR.name = 'legR'; legR.position.set(0.11, 0.65, 0); group.add(legR);
+        const shoeL = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.15, 0.2), MAT.SHOES); shoeL.position.y = -0.4; legL.add(shoeL);
+        const shoeR = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.15, 0.2), MAT.SHOES); shoeR.position.y = -0.4; legR.add(shoeR);
+        const armL = new THREE.Mesh(GEO.CHAR_LIMB, matAcc); armL.name = 'armL'; armL.position.set(-0.28, 1.1, 0); group.add(armL);
+        const armR = new THREE.Mesh(GEO.CHAR_LIMB, matAcc); armR.name = 'armR'; armR.position.set(0.28, 1.1, 0); group.add(armR);
+
+        if (isPlayer) {
+            const backpack = new THREE.Mesh(GEO.CHAR_BACKPACK, MAT.BACKPACK); backpack.name='backpack'; backpack.position.set(0, 0.95, 0.2); group.add(backpack);
+            const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.8), MAT.WOOD);
+            stick.rotation.x = Math.PI/2; stick.position.y = -0.4; stick.position.z = 0.3;
+            stick.name = 'stick'; stick.visible = false;
+            armR.add(stick);
+        }
+        return group;
+    }
+
+    function generateDungeon() {
+        const dMap = [];
+        for(let z=0; z<ROWS; z++) {
+            let row = [];
+            for(let x=0; x<COLS; x++) {
+                if(z===0 || z===ROWS-1 || x===0 || x===COLS-1) row.push(1);
+                else row.push(0);
+            }
+            dMap.push(row);
+        }
+        for(let i=0; i<15; i++) {
+            let rx = Math.floor(Math.random() * (COLS-2)) + 1;
+            let rz = Math.floor(Math.random() * (ROWS-2)) + 1;
+            if(dMap[rz][rx] === 0 && !(rx===10 && rz===13)) dMap[rz][rx] = 1; 
+        }
+        dMap[13][10] = 991; // Exit
+        maps['dungeon'] = dMap;
+        monsterGroup.clear();
+        for(let i=0; i<5; i++) {
+            let rx = Math.floor(Math.random() * (COLS-2)) + 1;
+            let rz = Math.floor(Math.random() * (ROWS-2)) + 1;
+            createMonster(rx, rz);
+        }
+        document.getElementById('dungeon-ui').innerText = "DUNGEON LVL: " + dungeonLevel + " | TRASH: " + trashScore;
+        document.getElementById('dungeon-ui').style.display = 'block';
+    }
+
+    function createMonster(gx, gz) {
+        const darkColors = [0x424242, 0x212121, 0x3e2723, 0x1b5e20, 0x263238];
+        const color = darkColors[Math.floor(Math.random() * darkColors.length)];
+        const mon = new THREE.Mesh(GEO.MONSTER, new THREE.MeshLambertMaterial({ color: color }));
+        mon.position.set(gx - COLS/2 + 0.5, 0.5, gz - ROWS/2 + 0.5);
+        mon.userData = { gridX: gx, gridZ: gz, hp: 1, name: monsterNames[Math.floor(Math.random()*monsterNames.length)] };
+        monsterGroup.add(mon);
+    }
+
+    function loadMap3D(mapKey, startX, startY) {
+        worldGroup.clear(); npcGroup.clear(); mapObjects = {}; monsterGroup.clear();
+        currentMapKey = mapKey; 
+        if(mapKey === 'dungeon') {
+            generateDungeon();
+            currentMapBlueprint = maps['dungeon'];
+            scene.background = new THREE.Color(0x000000); 
+            const stick = playerGroup.getObjectByName('stick', true);
+            if(stick) stick.visible = true;
+        } else {
+            currentMapBlueprint = maps[mapKey];
+            document.getElementById('dungeon-ui').style.display = 'none';
+            scene.background = (mapKey === 'graveyard') ? new THREE.Color(0x1a237e) : new THREE.Color(0x87CEEB);
+            const stick = playerGroup.getObjectByName('stick', true);
+            if(stick) stick.visible = false;
+        }
+
+        for (let z = 0; z < ROWS; z++) {
+            for (let x = 0; x < COLS; x++) {
+                let id = currentMapBlueprint[z][x];
+                if(id === TILE.SOIL || id === TILE.TILLED || id === TILE.PLANT || id === TILE.PALM_TREE) createVoxel(x, z, GEO.FLAT, (id===TILE.SOIL?MAT.SOIL:MAT.TILLED), 0);
+                else if (id === TILE.WATER || id === TILE.MANGROVE) createVoxel(x, z, GEO.FLAT, MAT.WATER, -0.2);
+                else if (id === TILE.LAVA) createVoxel(x, z, GEO.FLAT, MAT.LAVA, 0);
+                else if (id === TILE.RUG) createVoxel(x, z, GEO.FLAT, MAT.RUG, 0);
+                else if ((id >= 10 && id <= 12) || (id>=15 && id<=22) || id===TILE.STALL) createVoxel(x, z, GEO.FLAT, MAT.WOOD, 0); 
+                else if (currentMapKey === 'graveyard') createVoxel(x, z, GEO.FLAT, MAT.SOIL, -0.1); 
+                else if (currentMapKey === 'dungeon') createVoxel(x, z, GEO.FLAT, MAT.DUNGEON_FLOOR, 0);
+                else createVoxel(x, z, GEO.FLAT, MAT.GRASS, -0.1);
+
+                if (id === TILE.WALL) createVoxel(x, z, GEO.BLOCK, MAT.WALL, 0.5);
+                else if (id > 90) createVoxel(x, z, GEO.BLOCK, MAT.DOOR, 0.5);
+                else if (id === TILE.BLACKBOARD) createVoxel(x, z, GEO.BLOCK, MAT.BLACKBOARD, 0.5);
+                else if (id === TILE.DESK) createVoxel(x, z, GEO.DESK, MAT.DESK, 0.25);
+                else if (id === TILE.BED) createVoxel(x, z, GEO.DESK, MAT.BED, 0.2); 
+                else if (id === TILE.TV) createVoxel(x, z, GEO.BLOCK, MAT.TV, 0.5); 
+                else if (id === TILE.KITCHEN) createVoxel(x, z, GEO.BLOCK, MAT.KITCHEN, 0.5);
+                else if (id === TILE.TABLE) createVoxel(x, z, GEO.DESK, MAT.TABLE, 0.25);
+                else if (id === TILE.FOUNTAIN) createVoxel(x, z, GEO.BLOCK, MAT.FOUNTAIN, 0.5);
+                else if (id === TILE.BENCH) createVoxel(x, z, GEO.DESK, MAT.WOOD, 0.2);
+                else if (id === TILE.TOMBSTONE) createVoxel(x, z, new THREE.BoxGeometry(0.6, 0.8, 0.2), MAT.TOMBSTONE, 0.4);
+                else if (id === TILE.STALL) createVoxel(x, z, GEO.DESK, MAT.STALL, 0.25);
+                else if (id === TILE.HOUSE_WALL || id === TILE.HOUSE_WINDOW || id === TILE.HOUSE_DOOR) {
+                    let mat = MAT.WOOD;
+                    if(id===TILE.HOUSE_WINDOW) mat = MAT.GLASS; if(id===TILE.HOUSE_DOOR) mat = MAT.DOOR_VISUAL;
+                    createVoxel(x, z, GEO.BLOCK, mat, 0.5); createVoxel(x, z, GEO.ROOF_SLOPE, MAT.ROOF, 1.5);
+                }
+                if (id === TILE.PLANT) createPlant(x, z);
+                if (id === TILE.MANGROVE) createMangrove(x, z);
+                if (id === TILE.PALM_TREE) createPalm(x, z);
+            }
+        }
+        npcsData.forEach(npc => { 
+            if(npc.map === mapKey) createNPC(npc.x, npc.y, npc.type, npc.dialog, npc.country); 
+        });
+        targetGridX = startX; targetGridZ = startY;
+        playerGroup.position.set(startX - COLS/2 + 0.5, 0, startY - ROWS/2 + 0.5);
+        updateUI("Entered Area: " + mapKey.toUpperCase());
+        drawMinimap();
+    }
+
+    const playerGroup = createCharacterModel(true); scene.add(playerGroup);
+
+    function createNPC(gx, gz, type, dialog, country) {
+        const group = createCharacterModel(false, type);
+        group.position.set(gx - COLS/2 + 0.5, 0, gz - ROWS/2 + 0.5);
+        group.userData = { isNPC: true, dialog: dialog, gridX: gx, gridZ: gz, type: type, country: country };
+        npcGroup.add(group);
+    }
+
+    const minimapCanvas = document.getElementById('minimap');
+    const mCtx = minimapCanvas.getContext('2d');
+    function drawMinimap() {
+        mCtx.fillStyle = '#000'; mCtx.fillRect(0,0,200,150); 
+        const tileSize = 200 / COLS; 
+        for (let z = 0; z < ROWS; z++) {
+            for (let x = 0; x < COLS; x++) {
+                let id = currentMapBlueprint[z][x];
+                let color = '#8bc34a'; 
+                if (id === TILE.WALL) color = '#795548';
+                if (id === TILE.WATER) color = '#4fc3f7';
+                if (id > 90) color = '#ffeb3b'; 
+                if (id === TILE.STALL) color = '#ffcc80';
+                mCtx.fillStyle = color; mCtx.fillRect(x * tileSize, z * tileSize, tileSize, tileSize);
+            }
+        }
+        mCtx.fillStyle = '#00ffff';
+        npcGroup.children.forEach(n => { mCtx.fillRect(n.userData.gridX * tileSize, n.userData.gridZ * tileSize, tileSize, tileSize); });
+        mCtx.fillStyle = '#ff0000';
+        mCtx.fillRect(targetGridX * tileSize, targetGridZ * tileSize, tileSize, tileSize);
+    }
+
+    function saveGame() {
+        const saveData = { map: currentMapKey, x: targetGridX, z: targetGridZ, mapsData: maps, dLvl: dungeonLevel, trash: trashScore };
+        localStorage.setItem('harvestHeritageSave', JSON.stringify(saveData));
+        const notif = document.getElementById('save-notif'); notif.style.display = 'block'; setTimeout(() => notif.style.display = 'none', 2000);
+    }
+
+    function loadGame() {
+        const dataStr = localStorage.getItem('harvestHeritageSave');
+        if (!dataStr) { alert("No Save Data!"); return; }
+        const data = JSON.parse(dataStr);
+        maps = data.mapsData; dungeonLevel = data.dLvl || 1; trashScore = data.trash || 0;
+        GAME_STATE = 'PLAY'; document.getElementById('title-screen').style.display = 'none'; document.getElementById('ui-container').style.display = 'block'; document.getElementById('minimap-container').style.display = 'block';
+        loadMap3D(data.map, data.x, data.z);
+        camera.position.set(0, 18, 14); camera.lookAt(0, 0, 0);
+        updateUI("GAME LOADED!");
+    }
+
+    let targetGridX = 10; let targetGridZ = 10; let facingDir = { x: 0, z: 1 };
+    const uiBox = document.getElementById("ui-box");
+    function updateUI(text) { uiBox.innerText = text; }
+
+    function startGame() {
+        if(GAME_STATE === 'TITLE') {
+            GAME_STATE = 'PLAY'; 
+            document.getElementById('title-screen').style.display = 'none'; 
+            document.getElementById('ui-container').style.display = 'block';
+            document.getElementById('minimap-container').style.display = 'block';
+            loadMap3D('farm', 10, 5); 
+            camera.position.set(0, 18, 14); camera.lookAt(0, 0, 0);
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key.toLowerCase() === 's' && GAME_STATE === 'PLAY') { saveGame(); return; }
+        if (e.key.toLowerCase() === 'l') { loadGame(); return; }
+        if (GAME_STATE === 'TITLE') { if (e.key === ' ' || e.key === 'Enter') startGame(); return; }
+        
+        let distToTarget = Math.abs(playerGroup.position.x - (targetGridX - COLS/2 + 0.5)) + Math.abs(playerGroup.position.z - (targetGridZ - ROWS/2 + 0.5));
+        if (distToTarget > 0.1) return;
+
+        let dx = 0, dz = 0;
+        if (e.key === 'ArrowUp') { dz = -1; facingDir = {x:0, z:-1}; }
+        if (e.key === 'ArrowDown') { dz = 1; facingDir = {x:0, z:1}; }
+        if (e.key === 'ArrowLeft') { dx = -1; facingDir = {x:-1, z:0}; }
+        if (e.key === 'ArrowRight') { dx = 1; facingDir = {x:1, z:0}; }
+        
+        if (dx !== 0 || dz !== 0) {
+            let nextX = targetGridX + dx; let nextZ = targetGridZ + dz;
+            if(nextX < 0 || nextX >= COLS || nextZ < 0 || nextZ >= ROWS) return; 
+            let nextTileId = currentMapBlueprint[nextZ][nextX];
+            
+            // COLLISION - Added 99 (WALL)
+            if(nextTileId === TILE.WALL || nextTileId === 99 || nextTileId === TILE.WATER || nextTileId === TILE.LAVA || 
+               nextTileId === TILE.BLACKBOARD || nextTileId === TILE.DESK || nextTileId === TILE.TV || nextTileId === TILE.MANGROVE ||
+               nextTileId === TILE.KITCHEN || nextTileId === TILE.TABLE || nextTileId === TILE.FOUNTAIN || nextTileId === TILE.BENCH ||
+               nextTileId === TILE.TOMBSTONE || nextTileId === TILE.STALL || nextTileId === TILE.PALM_TREE ||
+               (nextTileId >= 10 && nextTileId <= 11) || nextTileId === 16) return;
+
+            let hitNPC = npcGroup.children.find(n => n.userData.gridX === nextX && n.userData.gridZ === nextZ);
+            if(hitNPC) return;
+            let hitMon = monsterGroup.children.find(n => n.userData.gridX === nextX && n.userData.gridZ === nextZ);
+            if(hitMon) return; 
+
+            targetGridX = nextX; targetGridZ = nextZ;
+            checkDoorCollision(nextX, nextZ, nextTileId);
+            drawMinimap();
+        }
+        if (e.key === ' ') interact();
+    });
+
+    function checkDoorCollision(x, z, tileId) {
+        if (tileId === TILE.DOOR_VILLAGE) loadMap3D('village', 10, 11);
+        else if (tileId === TILE.DOOR_FARM) loadMap3D('farm', 10, 2);
+        else if (tileId === TILE.DOOR_MOUNTAIN) loadMap3D('mountain', 10, 12);
+        else if (tileId === 91 && currentMapKey === 'mountain') loadMap3D('village', 10, 1);
+        else if (tileId === TILE.DOOR_SCHOOL) loadMap3D('school', 10, 8);
+        else if (tileId === 91 && currentMapKey === 'school') loadMap3D('village', 0, 7);
+        else if (tileId === TILE.HOUSE_DOOR) loadMap3D('home', 10, 8); 
+        else if (tileId === 92 && currentMapKey === 'home') loadMap3D('farm', 10, 6);
+        else if (tileId === TILE.DOOR_SQUARE && currentMapKey === 'village') loadMap3D('square', 1, 8);
+        else if (tileId === 91 && currentMapKey === 'square') loadMap3D('village', 18, 7);
+        else if (tileId === TILE.DOOR_BEACH && currentMapKey === 'square') loadMap3D('beach', 1, 7);
+        else if (tileId === 95 && currentMapKey === 'beach') loadMap3D('square', 18, 7);
+        else if (tileId === TILE.DOOR_GRAVE && currentMapKey === 'square') loadMap3D('graveyard', 10, 13);
+        else if (tileId === 95 && currentMapKey === 'graveyard') loadMap3D('square', 10, 1);
+        else if (tileId === TILE.DOOR_MARKET && currentMapKey === 'square') loadMap3D('market', 10, 1);
+        else if (tileId === 95 && currentMapKey === 'market') loadMap3D('square', 10, 13);
+        else if (tileId === TILE.DOOR_DUNGEON) { dungeonLevel++; loadMap3D('dungeon', 10, 13); }
+        else if (tileId === 991 && currentMapKey === 'dungeon') loadMap3D('graveyard', 10, 1); // Fixed Dungeon Exit
+        else if (tileId === TILE.DOOR_SAWIT) loadMap3D('sawit', 1, 7);
+        else if (tileId === 98 && currentMapKey === 'sawit') loadMap3D('market', 18, 3);
+        else if (tileId === TILE.DOOR_FOOD1) loadMap3D('food1', 2, 7);
+        else if (tileId === 100 && currentMapKey === 'food1') loadMap3D('sawit', 18, 5);
+        else if (tileId === 102 && currentMapKey === 'food1') loadMap3D('food2', 2, 7);
+        else if (tileId === 101 && currentMapKey === 'food2') loadMap3D('food1', 18, 3);
+        else if (tileId === 103 && currentMapKey === 'food2') loadMap3D('food3', 2, 7);
+        else if (tileId === 102 && currentMapKey === 'food3') loadMap3D('food2', 18, 3);
+        else if (tileId === 104 && currentMapKey === 'food3') loadMap3D('food4', 2, 7);
+        else if (tileId === 103 && currentMapKey === 'food4') loadMap3D('food3', 18, 3);
+    }
+
+    function interact() {
+        let ix = targetGridX + facingDir.x; let iz = targetGridZ + facingDir.z;
+        if(currentMapKey === 'dungeon') {
+            let mon = monsterGroup.children.find(n => n.userData.gridX === ix && n.userData.gridZ === iz);
+            if(mon) {
+                isScavenging = true; setTimeout(() => isScavenging = false, 300);
+                monsterGroup.remove(mon); trashScore++;
+                updateUI("Scavenged " + mon.userData.name + "! (+1 TRASH)");
+                document.getElementById('dungeon-ui').innerText = "DUNGEON: " + dungeonLevel + " | TRASH: " + trashScore;
+                return;
+            }
+        }
+        let npc = npcGroup.children.find(n => n.userData.gridX === ix && n.userData.gridZ === iz);
+        if(npc) { 
+            if(npc.userData.type === 'pocong') updateUI(pocongFacts[Math.floor(Math.random() * pocongFacts.length)]);
+            else if(npc.userData.country && foodFacts[npc.userData.country]) {
+                const facts = foodFacts[npc.userData.country];
+                updateUI(facts[Math.floor(Math.random() * facts.length)]);
+            }
+            else if(npc.userData.type === 'ich_guide') updateUI(ichMarketFacts[Math.floor(Math.random() * ichMarketFacts.length)]);
+            else updateUI(npc.userData.dialog); 
+            return; 
+        }
+        let objFront = mapObjects[`${ix},${iz}`];
+        if(objFront && objFront.blueprintId === TILE.WATER) {
+            currentMapBlueprint[iz][ix] = TILE.MANGROVE;
+            objFront.mesh.material = MAT.WATER; createMangrove(ix, iz);
+            updateUI("Planted Mangrove! (+1 Ecology)"); return;
+        }
+        if(objFront && objFront.blueprintId === TILE.BLACKBOARD) {
+             const randomFact = teachingFacts[Math.floor(Math.random() * teachingFacts.length)];
+             updateUI("[LESSON] " + randomFact); return;
+        }
+        let objUnder = mapObjects[`${targetGridX},${targetGridZ}`];
+        if(objUnder && objUnder.blueprintId === TILE.SOIL) {
+            objUnder.mesh.material = MAT.TILLED;
+            currentMapBlueprint[targetGridZ][targetGridX] = TILE.TILLED; objUnder.blueprintId = TILE.TILLED;
+            updateUI("Soil tilled!");
+        } else if (objUnder && objUnder.blueprintId === TILE.TILLED) {
+            currentMapBlueprint[targetGridZ][targetGridX] = TILE.PLANT; objUnder.blueprintId = TILE.PLANT;
+            createPlant(targetGridX, targetGridZ);
+            updateUI("Corn planted!");
+        }
+    }
+
+    function updateLimbs(group, isMoving) {
+        if (!group.getObjectByName('legL')) return;
+        const legL = group.getObjectByName('legL'); const legR = group.getObjectByName('legR');
+        const armL = group.getObjectByName('armL'); const armR = group.getObjectByName('armR');
+        const body = group.children.find(c => c.geometry === GEO.CHAR_BODY);
+
+        if (isScavenging) {
+            armR.rotation.x = -Math.PI / 2; body.rotation.x = 0.5;
+        } else if (isMoving) {
+            body.rotation.x = 0;
+            const time = Date.now() * 0.015;
+            legL.rotation.x = Math.sin(time) * 0.5; legR.rotation.x = -Math.sin(time) * 0.5;
+            armL.rotation.x = -Math.sin(time) * 0.5; armR.rotation.x = Math.sin(time) * 0.5;
+            group.position.y = Math.abs(Math.sin(time * 2)) * 0.1; 
+        } else {
+            body.rotation.x = 0;
+            legL.rotation.x = 0; legR.rotation.x = 0; armL.rotation.x = 0; armR.rotation.x = 0; group.position.y = 0;
+        }
+    }
+
+    function updateSawitDrama() {
+        if(currentMapKey !== 'sawit') return;
+        let wowo = npcGroup.children.find(n => n.userData.type === 'wowo');
+        let acti = npcGroup.children.find(n => n.userData.type === 'activist');
+        if(!wowo || !acti) return;
+        let time = Date.now() * 0.001;
+        let wx = 5 + Math.sin(time)*3; let ax = 5 + Math.sin(time-1)*3; 
+        wowo.position.x = wx - COLS/2 + 0.5; acti.position.x = ax - COLS/2 + 0.5;
+    }
+
+    loadMap3D('farm', 10, 5); playerGroup.visible = false;
+
+    function animate() {
+        requestAnimationFrame(animate);
+        if (GAME_STATE === 'TITLE') {
+            let time = Date.now() * 0.0005;
+            camera.position.x = Math.sin(time) * 20; camera.position.z = Math.cos(time) * 20;
+            camera.lookAt(0, 0, 0); playerGroup.visible = false;
+        } else {
+            playerGroup.visible = true;
+            let targetWorldX = targetGridX - COLS/2 + 0.5;
+            let targetWorldZ = targetGridZ - ROWS/2 + 0.5;
+            let dx = targetWorldX - playerGroup.position.x;
+            let dz = targetWorldZ - playerGroup.position.z;
+            let isMoving = Math.sqrt(dx*dx + dz*dz) > 0.05;
+
+            playerGroup.position.x += dx * 0.2;
+            playerGroup.position.z += dz * 0.2;
+            if (facingDir.z === 1) playerGroup.rotation.y = 0;
+            if (facingDir.z === -1) playerGroup.rotation.y = Math.PI;
+            if (facingDir.x === 1) playerGroup.rotation.y = Math.PI / 2;
+            if (facingDir.x === -1) playerGroup.rotation.y = -Math.PI / 2;
+
+            updateLimbs(playerGroup, isMoving);
+            updateSawitDrama();
+
+            npcGroup.children.forEach(npc => {
+                if(npc.userData.type === 'pocong') npc.position.y = Math.abs(Math.sin(Date.now() * 0.005)) * 0.5;
+                if(npc.userData.type === 'casper') npc.position.y = 0.5 + Math.sin(Date.now() * 0.002) * 0.1;
+            });
+
+            camera.position.x += (playerGroup.position.x - camera.position.x) * 0.05;
+            camera.position.z += ((playerGroup.position.z + 14) - camera.position.z) * 0.05;
+            camera.lookAt(playerGroup.position.x, 0, playerGroup.position.z);
+        }
+        renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
+</body>
+</html>
