@@ -122,7 +122,7 @@ canvas{display:block}#hud{position:fixed;inset:0;pointer-events:none;padding:14p
     const desired=new THREE.Vector3(player.position.x,15,player.position.z+11);camera.position.lerp(desired,1-Math.pow(.001,dt));camera.lookAt(player.position.x,0,player.position.z);
     updateHUD();
   }
-  function loop(now){renderer.setAnimationLoop(null);const dt=lastTime?Math.min((now-lastTime)/1000,.04):0;lastTime=now;update(dt);renderer.render(scene,camera);renderer.setAnimationLoop(loop);}
+  function loop(now){const dt=lastTime?Math.min((now-lastTime)/1000,.04):0;lastTime=now;update(dt);renderer.render(scene,camera);}
   renderer.setAnimationLoop(loop);
   window.addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.7));});
   updateHUD();
